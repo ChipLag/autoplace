@@ -1234,14 +1234,13 @@ local function getCurrentBlockId()
     return blockDef and blockDef.id
 end
 
--- Text Renderer variables (must be declared before UI callbacks)
+-- Text Autobuilder variables
 local currentText = ""
-local textSize = 2
-local textRenderFolder = nil
+local textPlacedBlocks = {} -- {x, y, z} for clear
 
--- Text Renderer Tab
-local textTab = Window:CreateTab("Text Renderer", 6031280880)
-local textInputLabel = textTab:CreateLabel("Enter text to render:")
+-- Text Autobuilder Tab
+local textTab = Window:CreateTab("Text Builder", 6031280880)
+textTab:CreateLabel("Enter text to build (1 pixel = 1 block):")
 local textInput = textTab:CreateInput({
     Name = "Text Input",
     PlaceholderText = "Enter text here...",
@@ -1250,24 +1249,13 @@ local textInput = textTab:CreateInput({
         currentText = text
     end
 })
-local textSizeLabel = textTab:CreateLabel("Text Size:")
-local textSizeSlider = textTab:CreateSlider({
-    Name = "Size",
-    Range = {1, 10},
-    Increment = 1,
-    CurrentValue = 2,
-    Flag = "textSize",
-    Callback = function(value)
-        textSize = value
-    end
-})
-local renderButton = textTab:CreateButton({
-    Name = "Render Text",
+textTab:CreateButton({
+    Name = "Build Text",
     Callback = function()
         if not currentText or currentText == "" then
             Rayfield:Notify({
                 Title = "No Text",
-                Content = "Please enter some text to render.",
+                Content = "Please enter some text to build.",
                 Duration = 3,
                 Image = 4483362458,
             })
@@ -1275,7 +1263,8 @@ local renderButton = textTab:CreateButton({
         end
 
         local blockId = getCurrentBlockId()
-        if not blockId then
+        local slot = getSlotWithBlockId(blockId)
+        if not blockId or not slot then
             Rayfield:Notify({
                 Title = "No Block",
                 Content = "Select a block in your hotbar first.",
@@ -1285,36 +1274,28 @@ local renderButton = textTab:CreateButton({
             return
         end
 
-        if textRenderFolder then
-            textRenderFolder:ClearAllChildren()
-        else
-            textRenderFolder = Instance.new("Folder")
-            textRenderFolder.Name = "TextRender"
-            textRenderFolder.Parent = workspace
-        end
-
-        local charSize = 0.2 * textSize
-        local rootPart = players.LocalPlayer.Character and players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if not rootPart then return end
-        local startPos = rootPart.Position + Vector3.new(-2, 2, 0)
+        local char = players.LocalPlayer.Character
+        if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+        local rootPos = char.HumanoidRootPart.Position
+        local startGx = math.floor(rootPos.X / blocksize) - math.floor(#currentText * 3)
+        local startGy = math.floor(rootPos.Y / blocksize)
+        local startGz = math.floor(rootPos.Z / blocksize)
         local placedCount = 0
 
         for i = 1, #currentText do
-            local char = string.sub(currentText, i, i)
-            local pattern = FontAssets.getPattern(char)
+            local c = string.sub(currentText, i, i)
+            local pattern = FontAssets.getPattern(c)
 
             if pattern then
                 for row = 0, 4 do
                     for col = 0, 4 do
                         local pixelIndex = row * 5 + col + 1
                         if string.sub(pattern, pixelIndex, pixelIndex) == "1" then
-                            local worldPos = startPos +
-                                Vector3.new(col * charSize, -row * charSize, 0) +
-                                Vector3.new((i - 1) * charSize * 6, 0, 0)
-                            local gx = math.round(worldPos.X / blocksize)
-                            local gy = math.round(worldPos.Y / blocksize)
-                            local gz = math.round(worldPos.Z / blocksize)
-                            if placeBlockAt(gx, gy, gz, false, blockId, getSlotWithBlockId(blockId)) then
+                            local gx = startGx + (i - 1) * 6 + col
+                            local gy = startGy + (4 - row)
+                            local gz = startGz
+                            if placeBlockAt(gx, gy, gz, false, blockId, slot) then
+                                table.insert(textPlacedBlocks, {x = gx, y = gy, z = gz})
                                 placedCount = placedCount + 1
                             end
                         end
@@ -1324,22 +1305,51 @@ local renderButton = textTab:CreateButton({
         end
 
         Rayfield:Notify({
-            Title = "Text Rendered",
+            Title = "Text Built",
             Content = "Placed " .. placedCount .. " blocks for '" .. currentText .. "'",
             Duration = 3,
             Image = 4483362458,
         })
     end
 })
-local clearButton = textTab:CreateButton({
-    Name = "Clear Render",
+textTab:CreateButton({
+    Name = "Clear Built Text",
     Callback = function()
-        if textRenderFolder then
-            textRenderFolder:ClearAllChildren()
+        if #textPlacedBlocks == 0 then
+            Rayfield:Notify({
+                Title = "Nothing to Clear",
+                Content = "No text blocks to clear.",
+                Duration = 3,
+                Image = 4483362458,
+            })
+            return
         end
+
+        local blockId = getCurrentBlockId()
+        local slot = getSlotWithBlockId(blockId)
+        if not blockId or not slot then
+            Rayfield:Notify({
+                Title = "No Block",
+                Content = "Select a block in your hotbar to break with.",
+                Duration = 3,
+                Image = 4483362458,
+            })
+            return
+        end
+
+        local cleared = 0
+        for _, pos in ipairs(textPlacedBlocks) do
+            local blockData = cworld.getBlock(pos.x, pos.y, pos.z)
+            if blockData and blockData.id then
+                breakRemote:FireServer(pos.x, pos.y, pos.z, nil)
+                cleared = cleared + 1
+            end
+        end
+        textPlacedBlocks = {}
+
         Rayfield:Notify({
-            Title = "Render Cleared",
-            Content = "Text rendering has been cleared.",
+            Title = "Cleared",
+            Content = "Broke " .. cleared .. " blocks.",
             Duration = 3,
             Image = 4483362458,
         })
