@@ -37,6 +37,22 @@ local placeRemote = game.ReplicatedStorage.GameRemotes.PlaceBlock
 local changeSlot = game.ReplicatedStorage.GameRemotes.ChangeSlot
 local cworld = require(game.Players.LocalPlayer.PlayerScripts.MainLocalScript.CWorld)
 local ids = require(game.ReplicatedStorage.AssetsMod.IDs)
+local FontAssetsSuccess, FontAssetsResult = pcall(function()
+    return loadstring(game:HttpGet("https://raw.githubusercontent.com/ChipLag/autoplace/main/fontAssets.lua"))()
+end)
+
+if not FontAssetsSuccess then
+    warn("Failed to load FontAssets: " .. tostring(FontAssetsResult))
+    -- Provide a fallback font assets table
+    FontAssets = {
+        getPattern = function(char)
+            -- Return a simple pattern for debugging: a single pixel for any character
+            return "00000000000000000000000010000" -- center pixel on
+        end
+    }
+else
+    FontAssets = FontAssetsResult
+end
 
 -- State variables
 local breakRunning = false
@@ -1200,6 +1216,119 @@ task.spawn(function()
     end
 end)
 
+-- Text Renderer Tab
+local textTab = Window:CreateTab("Text Renderer", 6031280880) -- Font icon
+local textInputLabel = textTab:CreateLabel("Enter text to render:")
+local textInput = textTab:CreateInput({
+    Name = "Text Input",
+    PlaceholderText = "Enter text here...",
+    RemoveTextAfterFocusLost = false,
+    Callback = function(text)
+        -- Store the input text for rendering
+        currentText = text
+    end
+})
+local textSizeLabel = textTab:CreateLabel("Text Size:")
+local textSizeSlider = textTab:CreateSlider({
+    Name = "Size",
+    Range = {1, 10},
+    Increment = 1,
+    CurrentValue = 2,
+    Flag = "textSize",
+    Callback = function(value)
+        textSize = value
+    end
+})
+local textColorLabel = textTab:CreateLabel("Text Color:")
+local textColorPicker = textTab:CreateColorPicker({
+    Name = "Color",
+    Color = Color3.new(1, 1, 1), -- White
+    Flag = "textColor",
+    Callback = function(color)
+        textColor = color
+    end
+})
+local renderButton = textTab:CreateButton({
+    Name = "Render Text",
+    Callback = function()
+        if not currentText or currentText == "" then
+            Rayfield:Notify({
+                Title = "No Text",
+                Content = "Please enter some text to render.",
+                Duration = 3,
+                Image = 4483362458,
+            })
+            return
+        end
+        
+        -- Clear previous text rendering
+        if textRenderFolder then
+            textRenderFolder:ClearAllChildren()
+        else
+            textRenderFolder = Instance.new("Folder")
+            textRenderFolder.Name = "TextRender"
+            textRenderFolder.Parent = workspace
+        end
+        
+        -- Render each character
+        local charSize = 0.2 * textSize -- Base size scaled by slider
+        local startPos = players.LocalPlayer.Character.HumanoidRootPart.Position + Vector3.new(-2, 2, 0)
+        
+        for i = 1, #currentText do
+            local char = string.sub(currentText, i, i)
+            local pattern = FontAssets.getPattern(char)
+            
+            if pattern then
+                -- Render each pixel of the character
+                for row = 0, 4 do
+                    for col = 0, 4 do
+                        local pixelIndex = row * 5 + col + 1
+                        if string.sub(pattern, pixelIndex, pixelIndex) == "1" then
+                            local part = Instance.new("Part")
+                            part.Size = Vector3.new(charSize, charSize, charSize)
+                            part.Position = startPos + 
+                                Vector3.new(col * charSize, -row * charSize, 0) + 
+                                Vector3.new((i-1) * charSize * 6, 0, 0) -- Space between characters
+                            part.Anchored = true
+                            part.CanCollide = false
+                            part.Color = textColor
+                            part.Parent = textRenderFolder
+                        end
+                    end
+                end
+            end
+        end
+        
+        Rayfield:Notify({
+            Title = "Text Rendered",
+            Content = "Text '" .. currentText .. "' has been rendered!",
+            Duration = 3,
+            Image = 4483362458,
+        })
+    end
+})
+local clearButton = textTab:CreateButton({
+    Name = "Clear Render",
+    Callback = function()
+        if textRenderFolder then
+            textRenderFolder:ClearAllChildren()
+        end
+        Rayfield:Notify({
+            Title = "Render Cleared",
+            Content = "Text rendering has been cleared.",
+            Duration = 3,
+            Image = 4483362458,
+        })
+    end
+})
+
+-- Initialize variables for text renderer
+local currentText = ""
+local textSize = 2
+local textColor = Color3.new(1, 1, 1)
+local textRenderFolder = nil
+
+
 -- Jail Tab
 local jailTab = Window:CreateTab("Jail", 6026568294) -- Plus icon
 local jailStatusLabel = jailTab:CreateLabel("Jail: Disabled")
@@ -1208,13 +1337,13 @@ local jailConn = nil
 local jailTargetPlayer = "" -- Stores the username of the player to jail
 
 -- Player selection for jail
-jailTab:CreateLabel("Target Player (username or display name):")
+jailTab:CreateLabel("Target Players (comma-separated usernames or display names):")
 local jailTargetInput = jailTab:CreateInput({
-    Name = "Player Name",
-    PlaceholderText = "Enter player name...",
+    Name = "Player Names",
+    PlaceholderText = "Enter player names separated by commas...",
     RemoveTextAfterFocusLost = false,
     Callback = function(text)
-        jailTargetPlayer = text
+        jailTargetPlayers = text
     end
 })
 
@@ -1244,85 +1373,136 @@ local function startJail()
             return
         end
         
-        -- Find target player
-        local targetPlayer = nil
-        if jailTargetPlayer ~= "" then
-            -- Search for player by username or display name
-            for _, player in ipairs(players:GetPlayers()) do
-                if string.lower(player.Name) == string.lower(jailTargetPlayer) or 
-                   (player.DisplayName and string.lower(player.DisplayName) == string.lower(jailTargetPlayer)) then
-                    targetPlayer = player
-                    break
-                end
-                -- Partial match (substring)
-                if string.find(string.lower(player.Name), string.lower(jailTargetPlayer)) or 
-                   (player.DisplayName and string.find(string.lower(player.DisplayName), string.lower(jailTargetPlayer))) then
-                    targetPlayer = player
-                    break
-                end
-            end
-        end
-        
-        -- If no target specified or not found, use local player
-        if not targetPlayer then
-            targetPlayer = players.LocalPlayer
-        end
-        
-        local char = targetPlayer.Character
-        if not char or not char:FindFirstChild("HumanoidRootPart") then
-            jailStatusLabel:Set("Jail: Target player not found or invalid")
-            return
-        end
-        
-        local root = char.HumanoidRootPart
-        local originPos = root.Position
-        local originX = math.floor(originPos.X / blocksize + 0.5)
-        local originY = math.floor(originPos.Y / blocksize + 0.5) - 1
-        local originZ = math.floor(originPos.Z / blocksize + 0.5)
-
-        local blockId = getCurrentBlockId()
-        if not blockId then
-            jailStatusLabel:Set("Jail: No block selected")
-            return
-        end
-
-        -- Check which positions need jail blocks and place only those
-        local blocksPlaced = 0
-        -- Build the cage: 3x3x4
-        for y = 0, 3 do
-            for x = -1, 1 do
-                for z = -1, 1 do
-                    if (y < 2) and (x == 0) and (z == 0) then
-                        -- skip the center hollow part
-                    else
-                        -- Check if we need to place a jail block at this position
-                        local blockData, _ = cworld.getBlock(originX + x, originY + y, originZ + z)
-                        -- Place if no block there or if it's not our jail block
-                        if not blockData or not blockData.id or blockData.id ~= blockId then
-                            -- Get slot for this block ID
-                            local slot = getSlotWithBlockId(blockId)
-                            
-                            -- Enable freecam during placement
-                            saveState()
-                            startFreecam()
-                            
-                            -- We want to place the block at (originX+x, originY+y, originZ+z)
-                            -- We'll use placeBlockAt with override=true to ensure we place the jail block.
-                            if placeBlockAt(originX + x, originY + y, originZ + z, true, blockId, slot) then
-                                blocksPlaced = blocksPlaced + 1
-                            end
-                            
-                            -- Disable freecam after placement
-                            stopFreecam()
-                            restoreState()
+        -- Find target players (comma-separated)
+        local targetPlayers = {}
+        if jailTargetPlayers ~= "" then
+            -- Split by comma and trim whitespace
+            for name in string.gmatch(jailTargetPlayers, "[^,]+") do
+                name = string.match(name, "^%s*(.-)%s*$") -- Trim whitespace
+                if name ~= "" then
+                    -- Search for player by username or display name
+                    local foundPlayer = nil
+                    for _, player in ipairs(players:GetPlayers()) do
+                        if string.lower(player.Name) == string.lower(name) or 
+                           (player.DisplayName and string.lower(player.DisplayName) == string.lower(name)) then
+                            foundPlayer = player
+                            break
                         end
+                        -- Partial match (substring)
+                        if string.find(string.lower(player.Name), string.lower(name)) or 
+                           (player.DisplayName and string.find(string.lower(player.DisplayName), string.lower(name))) then
+                            foundPlayer = player
+                            break
+                        end
+                    end
+                    if foundPlayer then
+                        table.insert(targetPlayers, foundPlayer)
                     end
                 end
             end
         end
         
-        if blocksPlaced > 0 then
-            jailStatusLabel:Set(string.format("Jail: Enabled (%d blocks placed)", blocksPlaced))
+        -- If no targets specified or not found, use local player
+        if #targetPlayers == 0 then
+            table.insert(targetPlayers, players.LocalPlayer)
+        end
+        
+        local blockId = getCurrentBlockId()
+        if not blockId then
+            jailStatusLabel:Set("Jail: No block selected")
+            return
+        end
+        
+        -- Process each target player
+        local totalBlocksPlaced = 0
+        for _, targetPlayer in ipairs(targetPlayers) do
+            local char = targetPlayer.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                local root = char.HumanoidRootPart
+                local originPos = root.Position
+                local originX = math.floor(originPos.X / blocksize + 0.5)
+                local originY = math.floor(originPos.Y / blocksize + 0.5) - 1
+                local originZ = math.floor(originPos.Z / blocksize + 0.5)
+                
+                -- Build thicker jail structure:
+                -- Original was 3x3x4 (x:-1 to 1, y:0 to 3, z:-1 to 1) with center hollow (y<2 and x==0 and z==0)
+                -- Now make it 5x5x6 (x:-2 to 2, y:-2 to 3, z:-2 to 2) with appropriate hollow areas
+                
+                local blocksPlacedForPlayer = 0
+                
+                -- Bottom two layers (y = -2, -1) - solid (no holes)
+                for y = -2, -1 do
+                    for x = -2, 2 do
+                        for z = -2, 2 do
+                            local blockData, _ = cworld.getBlock(originX + x, originY + y, originZ + z)
+                            -- Place if no block there or if it's not our jail block
+                            if not blockData or not blockData.id or blockData.id ~= blockId then
+                                -- Get slot for this block ID
+                                local slot = getSlotWithBlockId(blockId)
+                                
+                                -- Enable freecam during placement
+                                saveState()
+                                startFreecam()
+                                
+                                -- We want to place the block at (originX+x, originY+y, originZ+z)
+                                -- We'll use placeBlockAt with override=true to ensure we place the jail block.
+                                if placeBlockAt(originX + x, originY + y, originZ + z, true, blockId, slot) then
+                                    blocksPlacedForPlayer = blocksPlacedForPlayer + 1
+                                end
+                                
+                                -- Disable freecam after placement
+                                stopFreecam()
+                                restoreState()
+                            end
+                        end
+                    end
+                end
+                
+                -- Middle layers (y = 0, 1, 2, 3) - with hollow areas
+                for y = 0, 3 do
+                    for x = -2, 2 do
+                        for z = -2, 2 do
+                            -- Determine if this position should be hollow
+                            local isHollow = false
+                            if y < 2 then
+                                -- For y=0 and y=1, create a 3x3 hollow area in the center
+                                if math.abs(x) <= 1 and math.abs(z) <= 1 then
+                                    isHollow = true
+                                end
+                            end
+                            
+                            if not isHollow then
+                                local blockData, _ = cworld.getBlock(originX + x, originY + y, originZ + z)
+                                -- Place if no block there or if it's not our jail block
+                                if not blockData or not blockData.id or blockData.id ~= blockId then
+                                    -- Get slot for this block ID
+                                    local slot = getSlotWithBlockId(blockId)
+                                    
+                                    -- Enable freecam during placement
+                                    saveState()
+                                    startFreecam()
+                                    
+                                    -- We want to place the block at (originX+x, originY+y, originZ+z)
+                                    -- We'll use placeBlockAt with override=true to ensure we place the jail block.
+                                    if placeBlockAt(originX + x, originY + y, originZ + z, true, blockId, slot) then
+                                        blocksPlacedForPlayer = blocksPlacedForPlayer + 1
+                                    end
+                                    
+                                    -- Disable freecam after placement
+                                    stopFreecam()
+                                    restoreState()
+                                end
+                            end
+                        end
+                    end
+                end
+                
+                totalBlocksPlaced = totalBlocksPlaced + blocksPlacedForPlayer
+            end
+        end
+        
+        if totalBlocksPlaced > 0 then
+            jailStatusLabel:Set(string.format("Jail: Enabled (%d blocks placed)", totalBlocksPlaced))
         else
             jailStatusLabel:Set("Jail: Enabled (all blocks intact)")
         end
@@ -1349,6 +1529,30 @@ local jailToggle = jailTab:CreateToggle({
             stopJail()
         end
     end
+})
+
+-- Initialize
+Rayfield:Notify({
+    Title = "AutoBuilder Loaded",
+    Content = "The AutoBuilder script has been successfully loaded!\nUse the tabs to control breaking, placing, freecam, area selection, structure management, and jail.",
+    Duration = 5,
+    Image = 4483362458,
+})
+
+-- Initialize
+Rayfield:Notify({
+    Title = "AutoBuilder Loaded",
+    Content = "The AutoBuilder script has been successfully loaded!\nUse the tabs to control breaking, placing, freecam, area selection, structure management, and jail.",
+    Duration = 5,
+    Image = 4483362458,
+})
+
+-- Initialize
+Rayfield:Notify({
+    Title = "AutoBuilder Loaded",
+    Content = "The AutoBuilder script has been successfully loaded!\nUse the tabs to control breaking, placing, freecam, area selection, structure management, and jail.",
+    Duration = 5,
+    Image = 4483362458,
 })
 
 -- Initialize
