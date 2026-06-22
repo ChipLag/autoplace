@@ -1216,15 +1216,37 @@ task.spawn(function()
     end
 end)
 
+-- Function to get the current block ID from the hotbar
+local function getCurrentBlockId()
+    if not placeSlot then return nil end
+    local char = players.LocalPlayer.Character
+    if not char then return nil end
+    local inv = char:FindFirstChild("Inventory")
+    if not inv then return nil end
+    local slot = inv:FindFirstChild("Slot" .. placeSlot)
+    if not slot then return nil end
+    local data = game:GetService("HttpService"):JSONDecode(slot.Value)
+    if data.count <= 0 or data.name == "" then return nil end
+    local itemDef = ids.ByName.Items[data.name]
+    if not itemDef then return nil end
+    local blockName = itemDef.block or data.name
+    local blockDef = ids.ByName.Blocks[blockName]
+    return blockDef and blockDef.id
+end
+
+-- Text Renderer variables (must be declared before UI callbacks)
+local currentText = ""
+local textSize = 2
+local textRenderFolder = nil
+
 -- Text Renderer Tab
-local textTab = Window:CreateTab("Text Renderer", 6031280880) -- Font icon
+local textTab = Window:CreateTab("Text Renderer", 6031280880)
 local textInputLabel = textTab:CreateLabel("Enter text to render:")
 local textInput = textTab:CreateInput({
     Name = "Text Input",
     PlaceholderText = "Enter text here...",
     RemoveTextAfterFocusLost = false,
     Callback = function(text)
-        -- Store the input text for rendering
         currentText = text
     end
 })
@@ -1239,15 +1261,6 @@ local textSizeSlider = textTab:CreateSlider({
         textSize = value
     end
 })
-local textColorLabel = textTab:CreateLabel("Text Color:")
-local textColorPicker = textTab:CreateColorPicker({
-    Name = "Color",
-    Color = Color3.new(1, 1, 1), -- White
-    Flag = "textColor",
-    Callback = function(color)
-        textColor = color
-    end
-})
 local renderButton = textTab:CreateButton({
     Name = "Render Text",
     Callback = function()
@@ -1260,8 +1273,18 @@ local renderButton = textTab:CreateButton({
             })
             return
         end
-        
-        -- Clear previous text rendering
+
+        local blockId = getCurrentBlockId()
+        if not blockId then
+            Rayfield:Notify({
+                Title = "No Block",
+                Content = "Select a block in your hotbar first.",
+                Duration = 3,
+                Image = 4483362458,
+            })
+            return
+        end
+
         if textRenderFolder then
             textRenderFolder:ClearAllChildren()
         else
@@ -1269,39 +1292,40 @@ local renderButton = textTab:CreateButton({
             textRenderFolder.Name = "TextRender"
             textRenderFolder.Parent = workspace
         end
-        
-        -- Render each character
-        local charSize = 0.2 * textSize -- Base size scaled by slider
-        local startPos = players.LocalPlayer.Character.HumanoidRootPart.Position + Vector3.new(-2, 2, 0)
-        
+
+        local charSize = 0.2 * textSize
+        local rootPart = players.LocalPlayer.Character and players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not rootPart then return end
+        local startPos = rootPart.Position + Vector3.new(-2, 2, 0)
+        local placedCount = 0
+
         for i = 1, #currentText do
             local char = string.sub(currentText, i, i)
             local pattern = FontAssets.getPattern(char)
-            
+
             if pattern then
-                -- Render each pixel of the character
                 for row = 0, 4 do
                     for col = 0, 4 do
                         local pixelIndex = row * 5 + col + 1
                         if string.sub(pattern, pixelIndex, pixelIndex) == "1" then
-                            local part = Instance.new("Part")
-                            part.Size = Vector3.new(charSize, charSize, charSize)
-                            part.Position = startPos + 
-                                Vector3.new(col * charSize, -row * charSize, 0) + 
-                                Vector3.new((i-1) * charSize * 6, 0, 0) -- Space between characters
-                            part.Anchored = true
-                            part.CanCollide = false
-                            part.Color = textColor
-                            part.Parent = textRenderFolder
+                            local worldPos = startPos +
+                                Vector3.new(col * charSize, -row * charSize, 0) +
+                                Vector3.new((i - 1) * charSize * 6, 0, 0)
+                            local gx = math.round(worldPos.X / blocksize)
+                            local gy = math.round(worldPos.Y / blocksize)
+                            local gz = math.round(worldPos.Z / blocksize)
+                            if placeBlockAt(gx, gy, gz, false, blockId, getSlotWithBlockId(blockId)) then
+                                placedCount = placedCount + 1
+                            end
                         end
                     end
                 end
             end
         end
-        
+
         Rayfield:Notify({
             Title = "Text Rendered",
-            Content = "Text '" .. currentText .. "' has been rendered!",
+            Content = "Placed " .. placedCount .. " blocks for '" .. currentText .. "'",
             Duration = 3,
             Image = 4483362458,
         })
@@ -1322,12 +1346,6 @@ local clearButton = textTab:CreateButton({
     end
 })
 
--- Initialize variables for text renderer
-local currentText = ""
-local textSize = 2
-local textColor = Color3.new(1, 1, 1)
-local textRenderFolder = nil
-
 
 -- Jail Tab
 local jailTab = Window:CreateTab("Jail", 6026568294) -- Plus icon
@@ -1346,24 +1364,6 @@ local jailTargetInput = jailTab:CreateInput({
         jailTargetPlayers = text
     end
 })
-
--- Function to get the current block ID from the hotbar
-local function getCurrentBlockId()
-    if not placeSlot then return nil end
-    local char = players.LocalPlayer.Character
-    if not char then return nil end
-    local inv = char:FindFirstChild("Inventory")
-    if not inv then return nil end
-    local slot = inv:FindFirstChild("Slot" .. placeSlot)
-    if not slot then return nil end
-    local data = game:GetService("HttpService"):JSONDecode(slot.Value)
-    if data.count <= 0 or data.name == "" then return nil end
-    local itemDef = ids.ByName.Items[data.name]
-    if not itemDef then return nil end
-    local blockName = itemDef.block or data.name
-    local blockDef = ids.ByName.Blocks[blockName]
-    return blockDef and blockDef.id
-end
 
 local function startJail()
     if jailConn then return end
